@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import fs from 'node:fs/promises';
 import 'dotenv/config';
 import createDebug from 'debug';
+import { HtmlError } from './error.js';
 
 const createHtmlString = (title: string, header: string, content?: string) => `
     <!DOCTYPE html>
@@ -90,14 +91,18 @@ const postController = (request: IncomingMessage, response: ServerResponse) => {
     });
 
     request.on('end', () => {
+        // Handle the post data
+        const data = JSON.parse(body);
+        data.id = crypto.randomUUID();
+
+        const result = {
+            message: 'Datos recibidos',
+            data,
+        };
+
         response.statusCode = 201;
         response.setHeader('Content-Type', 'application/json; charset=utf-8');
-        response.end(
-            JSON.stringify({
-                message: 'Datos recibidos',
-                data: JSON.parse(body),
-            }),
-        );
+        response.end(JSON.stringify(result));
     });
 };
 
@@ -105,8 +110,13 @@ const appRouter = (request: IncomingMessage, response: ServerResponse) => {
     const { url, method } = request;
 
     if (!url) {
-        response.statusCode = 404;
-        response.end('Not found');
+        // response.statusCode = 404;
+        // response.end('Not found');
+
+        server.emit(
+            'error',
+            new HtmlError('Not found url empty', 404, 'Not found'),
+        );
         return;
     }
 
@@ -148,11 +158,21 @@ const listenManager = () => {
 
 const debug = createDebug('app:server');
 const PORT = process.env.PORT || 3000;
-
-const server = createServer(appRouter);
+// create a loca server to receive data from
+const server = createServer(appRouter); // appRouter is the function that will handle the requests
+// listen to the server
 server.listen(PORT);
 server.on('listening', listenManager);
-server.on('error', (error) => {
-    console.error(error);
-    debug(error);
+server.on('error', (error: HtmlError, response: ServerResponse) => {
+    if ('status'! in error) {
+        error = { ...error, statusCode: 500, status: 'Internal Server Error' };
+    }
+    // console.error(error.message);
+    debug(error.message, error.statusCode, error.status);
+
+    const html = createHtmlString('Error', 'Error', error.message);
+    response.statusCode = error.statusCode;
+    response.statusMessage = error.status;
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.end(html);
 });
